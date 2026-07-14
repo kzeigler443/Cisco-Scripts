@@ -2,6 +2,7 @@
 import csv       # For reading IP addresses from a CSV file
 import getpass   # For securely prompting the user for a password (input is hidden)
 import os        # For checking if a file exists on disk
+import re        # For parsing model and version out of 'show version' output
 from datetime import datetime  # For generating a timestamp on the output file
 
 # --- Third-party library imports (requires: pip install netmiko) ---
@@ -9,6 +10,138 @@ from netmiko import ConnectHandler  # Main class for opening SSH connections to 
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException
 # NetmikoAuthenticationException: raised when the username/password is wrong
 # NetmikoTimeoutException: raised when the device doesn't respond in time
+
+
+# ---------------------------------------------------------------------------
+# TrustSec Compatibility Reference Table
+# ---------------------------------------------------------------------------
+# Each entry is a tuple of (regex_pattern, compatibility_info_dict).
+#
+# HOW IT WORKS:
+#   When we detect a switch model from 'show version', we walk this list
+#   top-to-bottom and return the info dict for the FIRST pattern that matches.
+#   Because of this, MORE SPECIFIC patterns must come BEFORE broader ones.
+#   Example: "WS-C2960XR" must appear before "WS-C2960X", which must appear
+#   before "WS-C2960" — otherwise a 2960XR would incorrectly match 2960.
+#
+# 'supported' values:
+#   "Yes"     - Platform fully supports TrustSec (SGT tagging + SGACL enforcement)
+#   "Partial" - Supports SXP-based SGT propagation only; no inline tagging
+#   "Limited" - 802.1X/MAB auth only; no SGT or SGACL features
+#   "No"      - TrustSec is not supported on this platform
+#   "Unknown" - Model not found in this table; manual verification needed
+#
+# Source: Cisco TrustSec Platform Support Matrix
+# NOTE: This table covers common enterprise access/distribution switches.
+#       Always verify against Cisco's official documentation for your
+#       specific deployment, as support can vary by software release.
+# ---------------------------------------------------------------------------
+TRUSTSEC_COMPAT = [
+
+    # --- Catalyst 9000 Series ---
+    # The 9200/9300/9400/9500 and 9600 all ship with full TrustSec out of the box.
+    (r"C9[2345]\d{2}", {
+        "supported": "Yes",
+        "min_version": None,
+        "notes": "Full TrustSec support: inline SGT tagging, SGACL enforcement, and SXP."
+    }),
+    (r"C96\d{2}", {
+        "supported": "Yes",
+        "min_version": None,
+        "notes": "Full TrustSec support: inline SGT tagging, SGACL enforcement, and SXP."
+    }),
+
+    # --- Catalyst 3850 / 3650 ---
+    # These platforms support full TrustSec but require a minimum IOS-XE version.
+    (r"WS-C3850", {
+        "supported": "Yes",
+        "min_version": "3.6.0E",
+        "notes": "Full TrustSec support. Requires IOS-XE 3.6.0E or later."
+    }),
+    (r"WS-C3650", {
+        "supported": "Yes",
+        "min_version": "3.6.0E",
+        "notes": "Full TrustSec support. Requires IOS-XE 3.6.0E or later."
+    }),
+
+    # --- Catalyst 3750-X / 3560-X ---
+    # The -X suffix models support full TrustSec; non-X models below are limited.
+    # These entries must come before the broader WS-C3750 / WS-C3560 entries.
+    (r"WS-C3750X", {
+        "supported": "Yes",
+        "min_version": "15.0(1)SE",
+        "notes": "Full TrustSec support. Requires IOS 15.0(1)SE or later."
+    }),
+    (r"WS-C3560X", {
+        "supported": "Yes",
+        "min_version": "15.0(1)SE",
+        "notes": "Full TrustSec support. Requires IOS 15.0(1)SE or later."
+    }),
+
+    # --- Catalyst 4500 ---
+    # Supported, but depends on which supervisor engine is installed.
+    (r"WS-C4[59]\d{2}", {
+        "supported": "Yes",
+        "min_version": None,
+        "notes": "TrustSec supported with Supervisor 8-E or later. Verify supervisor model separately."
+    }),
+
+    # --- Catalyst 6500 / 6800 ---
+    # Supported on specific supervisor + IOS combinations.
+    (r"WS-C6[58]\d{2}", {
+        "supported": "Yes",
+        "min_version": "12.2(33)SXI",
+        "notes": "TrustSec supported. Requires IOS 12.2(33)SXI+ and Supervisor 720 or VS-S720-10G or better."
+    }),
+
+    # --- Catalyst 2960-XR ---
+    # Must appear BEFORE WS-C2960X so "XR" models don't get caught by the X pattern.
+    (r"WS-C2960XR", {
+        "supported": "Partial",
+        "min_version": None,
+        "notes": "SGT propagation via SXP only. No inline SGT tagging or SGACL enforcement."
+    }),
+
+    # --- Catalyst 2960-X ---
+    # Must appear BEFORE the generic WS-C2960 entry below.
+    (r"WS-C2960X", {
+        "supported": "Partial",
+        "min_version": None,
+        "notes": "SGT propagation via SXP only. No inline SGT tagging or SGACL enforcement."
+    }),
+
+    # --- Catalyst 2960S ---
+    # Must appear BEFORE the generic WS-C2960 entry below.
+    (r"WS-C2960S", {
+        "supported": "Limited",
+        "min_version": None,
+        "notes": "802.1X and MAB authentication only. No SGT tagging or SGACL enforcement."
+    }),
+
+    # --- Catalyst 2960 (non-X, non-S) / 2960-L / 2960-Plus ---
+    # This broad pattern is intentionally last among 2960 variants.
+    (r"WS-C2960", {
+        "supported": "No",
+        "min_version": None,
+        "notes": "TrustSec is not supported on this platform."
+    }),
+
+    # --- Catalyst 3560 (non-X) ---
+    # The -X variant is already handled above; this catches all other 3560 models.
+    (r"WS-C3560", {
+        "supported": "Limited",
+        "min_version": None,
+        "notes": "Limited TrustSec support. Verify your specific model and IOS version with the Cisco compatibility matrix."
+    }),
+
+    # --- Catalyst 3750 (non-X) ---
+    # The -X variant is already handled above; this catches all other 3750 models.
+    (r"WS-C3750", {
+        "supported": "Limited",
+        "min_version": None,
+        "notes": "Limited TrustSec support. Verify your specific model and IOS version with the Cisco compatibility matrix."
+    }),
+]
 
 
 def get_credentials():
@@ -92,6 +225,94 @@ def query_switch(host, username, password):
     return output
 
 
+def parse_show_version(output):
+    """
+    Extract the switch model and IOS version string from 'show version' output.
+    Returns a tuple: (model, version) — either value may be None if not found.
+
+    'show version' output format differs between IOS and IOS-XE, so we try
+    multiple regex patterns to cover both styles.
+    """
+    model = None
+    version = None
+
+    # --- Model detection ---
+
+    # Pattern 1 (IOS-XE / Catalyst 9000 style):
+    #   "Model Number              : C9300-24P"
+    match = re.search(r"[Mm]odel [Nn]umber\s*:\s*(\S+)", output)
+    if match:
+        model = match.group(1)
+
+    # Pattern 2 (classic IOS style):
+    #   "cisco WS-C3850-24P (MIPS) processor with ..."
+    # re.MULTILINE makes ^ match the start of each line, not just the whole string
+    if not model:
+        match = re.search(r"^cisco\s+([\w-]+)\s*\(", output, re.MULTILINE | re.IGNORECASE)
+        if match:
+            model = match.group(1)
+
+    # --- Version detection ---
+
+    # Handles both formats:
+    #   "Version 16.12.4,"   (IOS-XE)
+    #   "Version 15.2(7)E3," (classic IOS)
+    match = re.search(r"[Vv]ersion\s+([\d\w\.\(\)]+)[,\s]", output)
+    if match:
+        version = match.group(1)
+
+    return model, version
+
+
+def check_trustsec_compat(model):
+    """
+    Look up TrustSec compatibility for a given switch model string.
+    Returns a dict with 'supported', 'min_version', and 'notes' keys.
+    """
+    if not model:
+        return {
+            "supported": "Unknown",
+            "min_version": None,
+            "notes": "Could not parse model from 'show version' output. Manual verification required."
+        }
+
+    # Walk the compatibility table and return the first matching entry.
+    # re.IGNORECASE means 'ws-c3850' matches the same as 'WS-C3850'.
+    for pattern, compat_info in TRUSTSEC_COMPAT:
+        if re.search(pattern, model, re.IGNORECASE):
+            return compat_info
+
+    # If we reach here, no pattern matched — model is not in our table
+    return {
+        "supported": "Unknown",
+        "min_version": None,
+        "notes": (
+            f"Model '{model}' is not in the local compatibility table. "
+            "Verify manually using the Cisco TrustSec Platform Support Matrix."
+        )
+    }
+
+
+def format_trustsec_block(model, version, compat):
+    """
+    Build the TrustSec summary block that gets appended to each switch's
+    section in the output file.
+    """
+    lines = [
+        "",
+        "--- TrustSec Compatibility ---",
+        f"  Detected Model   : {model or 'Unknown'}",
+        f"  Detected Version : {version or 'Unknown'}",
+        f"  TrustSec Support : {compat['supported']}",
+    ]
+    # Only show the minimum version line when the table specifies one
+    if compat.get("min_version"):
+        lines.append(f"  Minimum Version  : {compat['min_version']}")
+    lines.append(f"  Notes            : {compat['notes']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     """Main entry point: collect credentials and IPs, query each switch, write results to file."""
 
@@ -126,8 +347,18 @@ def main():
             try:
                 # Attempt to connect and run 'show version'
                 result = query_switch(host, username, password)
-                f.write(result + "\n\n")
-                print("OK")
+                f.write(result + "\n")
+
+                # Parse the model and IOS version from the output, look up
+                # TrustSec compatibility, and append the summary to the file
+                model, version = parse_show_version(result)
+                compat = check_trustsec_compat(model)
+                f.write(format_trustsec_block(model, version, compat))
+                f.write("\n")
+
+                # Print a one-line summary to the console so the user can
+                # see the TrustSec result without having to open the file
+                print(f"OK  [TrustSec: {compat['supported']}]")
 
             except NetmikoAuthenticationException:
                 # Wrong username or password for this device
