@@ -20,14 +20,41 @@ REQUIREMENTS
 ------------
 Python 3.7 or higher is required.
 
-Install the netmiko library before running the script:
+It is strongly recommended to run this script inside a Python virtual
+environment. A virtual environment is an isolated Python installation that
+keeps the netmiko library (and its dependencies) separate from the rest of
+your system. This avoids version conflicts with other Python projects and is
+the most reliable way to get netmiko installed correctly on Windows.
+
+Step 1 — Create the virtual environment (one time only):
+
+    python -m venv netmiko_env
+
+This creates a folder called "netmiko_env" in your current directory.
+
+Step 2 — Activate the virtual environment:
+
+    .\netmiko_env\Scripts\activate
+
+Your terminal prompt will change to show "(netmiko_env)" when it is active.
+You must activate the environment every time you open a new terminal window
+before running the script.
+
+Step 3 — Install netmiko into the virtual environment:
 
     pip install netmiko
+
+This only needs to be done once after creating the environment.
+
+To deactivate the virtual environment when you are done, run:
+
+    deactivate
 
 
 HOW TO RUN
 ----------
-From a terminal, navigate to the Show-Version directory and run:
+From a terminal, activate the virtual environment (Step 2 above), then
+navigate to the Show-Version directory and run:
 
     python show_version.py
 
