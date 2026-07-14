@@ -18,33 +18,46 @@ across a fleet of switches without having to log into each one manually.
 
 REQUIREMENTS
 ------------
-Python 3.7 or higher is required.
+Python 3.7 or higher is required. Download it at https://www.python.org/downloads/
+Make sure to check "Add Python to PATH" during installation.
 
-It is strongly recommended to run this script inside a Python virtual
-environment. A virtual environment is an isolated Python installation that
-keeps the netmiko library (and its dependencies) separate from the rest of
-your system. This avoids version conflicts with other Python projects and is
-the most reliable way to get netmiko installed correctly on Windows.
+The script depends on the netmiko library. The easiest way to install
+everything is to run the included setup script (see AUTOMATED SETUP below).
+If you prefer to set things up manually, see MANUAL SETUP.
 
-Step 1 — Create the virtual environment (one time only):
+
+AUTOMATED SETUP (recommended)
+------------------------------
+A setup.bat file is included in this folder. It will:
+  - Check that Python is installed
+  - Create a virtual environment called "netmiko_env" (skipped if it already exists)
+  - Install netmiko and all its dependencies automatically
+
+To run it, double-click setup.bat or run it from a terminal:
+
+    .\setup.bat
+
+You only need to run setup.bat once. After that, skip straight to HOW TO RUN.
+
+
+MANUAL SETUP
+------------
+If you prefer to set up the environment yourself, run these commands once
+from a terminal in the Show-Version directory:
+
+Step 1 — Create the virtual environment:
 
     python -m venv netmiko_env
-
-This creates a folder called "netmiko_env" in your current directory.
 
 Step 2 — Activate the virtual environment:
 
     .\netmiko_env\Scripts\activate
 
 Your terminal prompt will change to show "(netmiko_env)" when it is active.
-You must activate the environment every time you open a new terminal window
-before running the script.
 
-Step 3 — Install netmiko into the virtual environment:
+Step 3 — Install dependencies:
 
-    pip install netmiko
-
-This only needs to be done once after creating the environment.
+    pip install -r requirements.txt
 
 To deactivate the virtual environment when you are done, run:
 
@@ -53,9 +66,10 @@ To deactivate the virtual environment when you are done, run:
 
 HOW TO RUN
 ----------
-From a terminal, activate the virtual environment (Step 2 above), then
-navigate to the Show-Version directory and run:
+Each time you open a new terminal, activate the virtual environment first,
+then run the script:
 
+    .\netmiko_env\Scripts\activate
     python show_version.py
 
 The script will walk you through the rest interactively.
