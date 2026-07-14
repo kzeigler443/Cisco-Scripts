@@ -1,3 +1,22 @@
+# =============================================================================
+# show_version.py
+#
+# PURPOSE:
+#   SSH into one or more Cisco switches, run "show version" on each one,
+#   and save the output to a timestamped text file. Each switch's result
+#   also includes a TrustSec compatibility summary based on its model and
+#   IOS version.
+#
+# USAGE:
+#   1. Activate the virtual environment:  .\netmiko_env\Scripts\activate
+#   2. Run the script:                    python show_version.py
+#   3. Follow the on-screen prompts.
+#
+# OUTPUT:
+#   A text file named show_version_YYYYMMDD_HHMMSS.txt is created in the
+#   same folder the script is run from.
+# =============================================================================
+
 # --- Standard library imports ---
 import csv       # For reading IP addresses from a CSV file
 import getpass   # For securely prompting the user for a password (input is hidden)
@@ -212,7 +231,11 @@ def query_switch(host, username, password):
         "timeout": 30,  # Seconds to wait before giving up on a connection
     }
 
-    # ConnectHandler opens the SSH session
+    # ConnectHandler opens the SSH session.
+    # The ** before 'device' is Python's dictionary unpacking syntax — it
+    # passes each key/value pair in the dict as a separate named argument,
+    # which is the same as writing:
+    #   ConnectHandler(device_type="cisco_ios", host=host, username=..., ...)
     conn = ConnectHandler(**device)
 
     # send_command sends 'show version' and waits for the prompt to return,
@@ -240,13 +263,27 @@ def parse_show_version(output):
 
     # Pattern 1 (IOS-XE / Catalyst 9000 style):
     #   "Model Number              : C9300-24P"
+    #
+    # Regex breakdown: r"[Mm]odel [Nn]umber\s*:\s*(\S+)"
+    #   [Mm]odel [Nn]umber  — matches "Model Number" or "model number" (case-insensitive first letters)
+    #   \s*                 — zero or more spaces/tabs
+    #   :                   — literal colon
+    #   \s*                 — zero or more spaces after the colon
+    #   (\S+)               — capture one or more non-whitespace characters (the model number)
+    #   .group(1)           — returns just the captured part inside the parentheses
     match = re.search(r"[Mm]odel [Nn]umber\s*:\s*(\S+)", output)
     if match:
         model = match.group(1)
 
     # Pattern 2 (classic IOS style):
     #   "cisco WS-C3850-24P (MIPS) processor with ..."
-    # re.MULTILINE makes ^ match the start of each line, not just the whole string
+    #
+    # Regex breakdown: r"^cisco\s+([\w-]+)\s*\("
+    #   ^                   — start of a line (re.MULTILINE makes ^ work per-line)
+    #   cisco               — literal word "cisco"
+    #   \s+                 — one or more spaces
+    #   ([\w-]+)            — capture one or more word characters or hyphens (the model number)
+    #   \s*\(               — optional space then a literal opening parenthesis
     if not model:
         match = re.search(r"^cisco\s+([\w-]+)\s*\(", output, re.MULTILINE | re.IGNORECASE)
         if match:
@@ -257,6 +294,12 @@ def parse_show_version(output):
     # Handles both formats:
     #   "Version 16.12.4,"   (IOS-XE)
     #   "Version 15.2(7)E3," (classic IOS)
+    #
+    # Regex breakdown: r"[Vv]ersion\s+([\d\w\.\(\)]+)[,\s]"
+    #   [Vv]ersion          — matches "Version" or "version"
+    #   \s+                 — one or more spaces
+    #   ([\d\w\.\(\)]+)     — capture digits, letters, dots, and parentheses (the version string)
+    #   [,\s]               — the version string ends at a comma or whitespace
     match = re.search(r"[Vv]ersion\s+([\d\w\.\(\)]+)[,\s]", output)
     if match:
         version = match.group(1)
@@ -298,10 +341,12 @@ def format_trustsec_block(model, version, compat):
     Build the TrustSec summary block that gets appended to each switch's
     section in the output file.
     """
+    # Build each line of the summary as a separate string in a list,
+    # then join them together at the end with newline characters between them.
     lines = [
         "",
         "--- TrustSec Compatibility ---",
-        f"  Detected Model   : {model or 'Unknown'}",
+        f"  Detected Model   : {model or 'Unknown'}",   # 'model or Unknown' prints "Unknown" if model is None
         f"  Detected Version : {version or 'Unknown'}",
         f"  TrustSec Support : {compat['supported']}",
     ]
@@ -310,6 +355,9 @@ def format_trustsec_block(model, version, compat):
         lines.append(f"  Minimum Version  : {compat['min_version']}")
     lines.append(f"  Notes            : {compat['notes']}")
     lines.append("")
+
+    # "\n".join(lines) combines all strings in the list into one string,
+    # placing a newline character between each item — like joining with glue.
     return "\n".join(lines)
 
 
@@ -344,6 +392,10 @@ def main():
             f.write(f"Host: {host}\n")
             f.write(f"{'=' * 60}\n")
 
+            # try/except lets us attempt a risky operation (connecting to a switch)
+            # and handle any failures gracefully instead of crashing the whole script.
+            # Each 'except' block catches a specific type of error so we can give
+            # a meaningful message rather than a generic Python traceback.
             try:
                 # Attempt to connect and run 'show version'
                 result = query_switch(host, username, password)
@@ -373,7 +425,8 @@ def main():
                 print(f"FAILED ({msg})")
 
             except Exception as e:
-                # Catch-all for any other unexpected errors (e.g. DNS failure, refused connection)
+                # Catch-all for any other unexpected error (e.g. DNS failure, refused connection).
+                # 'Exception as e' captures the error object so we can read its message with str(e).
                 msg = str(e)
                 f.write(f"ERROR: {msg}\n\n")
                 print(f"FAILED ({msg})")
