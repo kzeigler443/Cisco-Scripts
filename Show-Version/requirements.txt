@@ -1,1 +1,18 @@
+# requirements.txt
+# -----------------
+# This file lists the Python libraries required to run show_version.py.
+#
+# DO NOT install these manually. Use one of the methods below:
+#
+# Automated (recommended):
+#   Run setup.bat — it creates the virtual environment and installs
+#   everything listed here automatically.
+#
+# Manual:
+#   1. python -m venv netmiko_env
+#   2. .\netmiko_env\Scripts\activate
+#   3. pip install -r requirements.txt
+#
+# To add more libraries in the future, add them below (one per line).
+
 netmiko
